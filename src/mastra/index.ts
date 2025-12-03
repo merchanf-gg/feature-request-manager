@@ -1,29 +1,47 @@
+import { Mastra } from "@mastra/core/mastra";
+import { PinoLogger } from "@mastra/loggers";
+import { LibSQLStore } from "@mastra/libsql";
 
-import { Mastra } from '@mastra/core/mastra';
-import { PinoLogger } from '@mastra/loggers';
-import { LibSQLStore } from '@mastra/libsql';
-import { weatherWorkflow } from './workflows/weather-workflow';
-import { weatherAgent } from './agents/weather-agent';
-import { toolCallAppropriatenessScorer, completenessScorer, translationScorer } from './scorers/weather-scorer';
+// Agents
+import { featureRequestAgent } from "./agents/feature-request-agent";
+import { typeformParserAgent } from "./agents/typeform-parser-agent";
+
+// Workflows
+import { featureRequestWorkflow } from "./workflows/feature-request-workflow";
+
+// Routes
+import { typeformWebhookRoute, typeformWebhookHealthRoute } from "./routes/typeform-webhook";
 
 export const mastra = new Mastra({
-  workflows: { weatherWorkflow },
-  agents: { weatherAgent },
-  scorers: { toolCallAppropriatenessScorer, completenessScorer, translationScorer },
+  agents: { 
+    featureRequestAgent,
+    typeformParserAgent,
+  },
+  workflows: { 
+    featureRequestWorkflow,
+  },
   storage: new LibSQLStore({
-    // stores observability, scores, ... into memory storage, if it needs to persist, change to file:../mastra.db
+    // Stores workflow snapshots, traces, etc.
+    // For production, change to: url: process.env.DATABASE_URL
     url: ":memory:",
   }),
-  logger: new PinoLogger({
-    name: 'Mastra',
-    level: 'info',
-  }),
-  telemetry: {
-    // Telemetry is deprecated and will be removed in the Nov 4th release
-    enabled: false, 
+  server: {
+    port: 4111,
+    apiRoutes: [
+      typeformWebhookRoute,
+      typeformWebhookHealthRoute,
+    ],
+    cors: {
+      origin: ["*"], // Configure for your domain in production
+      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      allowHeaders: ["Content-Type", "Authorization", "X-Typeform-Signature"],
+    },
   },
+  logger: new PinoLogger({
+    name: "FeatureRequestManager",
+    level: "info",
+  }),
   observability: {
-    // Enables DefaultExporter and CloudExporter for AI tracing
-    default: { enabled: true }, 
+    default: { enabled: true },
   },
 });
