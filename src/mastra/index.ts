@@ -22,7 +22,7 @@ export const mastra = new Mastra({
     featureRequestWorkflow,
   },
   deployer: new VercelDeployer({
-    maxDuration: 600,
+    maxDuration: 300,
     memory: 1536,
     regions: ["iad1"],
   }),
