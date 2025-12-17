@@ -24,7 +24,7 @@ export const mastra = new Mastra({
   deployer: new VercelDeployer({
     maxDuration: 600,
     memory: 1536,
-    regions: ["sfo1", "iad1"],
+    regions: ["iad1"],
   }),
   storage: new LibSQLStore({
     // Stores workflow snapshots, traces, etc.
