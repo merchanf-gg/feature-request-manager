@@ -11,6 +11,7 @@ import { featureRequestWorkflow } from "./workflows/feature-request-workflow";
 
 // Routes
 import { typeformWebhookRoute, typeformWebhookHealthRoute } from "./routes/typeform-webhook";
+import { VercelDeployer } from "@mastra/deployer-vercel";
 
 export const mastra = new Mastra({
   agents: { 
@@ -20,6 +21,11 @@ export const mastra = new Mastra({
   workflows: { 
     featureRequestWorkflow,
   },
+  deployer: new VercelDeployer({
+    maxDuration: 600,
+    memory: 1536,
+    regions: ["sfo1", "iad1"],
+  }),
   storage: new LibSQLStore({
     // Stores workflow snapshots, traces, etc.
     // For production, change to: url: process.env.DATABASE_URL

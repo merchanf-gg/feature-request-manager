@@ -8,7 +8,6 @@
     "build": "mastra build",
     "start": "mastra start"
   },
-  "keywords": ["mastra", "feature-requests", "gloss-genius", "typeform", "google-sheets"],
   "author": "",
   "license": "ISC",
   "description": "AI-powered feature request analyzer for GlossGenius - processes Typeform responses with PII sanitization and Google Sheets integration",
@@ -18,6 +17,7 @@
   },
   "dependencies": {
     "@mastra/core": "^0.24.6",
+    "@mastra/deployer-vercel": "^0.12.25",
     "@mastra/evals": "^0.14.4",
     "@mastra/libsql": "^0.16.3",
     "@mastra/loggers": "^0.10.19",
