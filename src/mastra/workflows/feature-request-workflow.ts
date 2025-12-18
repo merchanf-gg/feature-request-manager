@@ -1,10 +1,5 @@
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
-import { sanitizeText } from "../tools/pii-sanitizer";
-
-// ============================================================================
-// SCHEMAS
-// ============================================================================
 
 const formInputSchema = z.object({
     featureDescription: z.string().describe("Raw feature request description from Typeform"),
@@ -84,7 +79,7 @@ const convertTypeformResponseToJSON = createStep({
 
 const analyzeFeatureRequest = createStep({
   id: "analyze-feature-request",
-  description: "Analyzes the feature request and prepares it for Jira",
+  description: "Analyzes the feature request and prepares it for Jira using AI",
   inputSchema: formInputSchema,
   outputSchema: jiraStoryOutputSchema,
   execute: async ({ inputData, mastra }) => {
@@ -92,36 +87,44 @@ const analyzeFeatureRequest = createStep({
 
     const agent = mastra?.getAgent("jiraFeatureRequestAgent");
     if (!agent) {
-      throw new Error("Jira feature request agent not found");
+      throw new Error("Jira Feature Request agent not found");
     }
 
-    // Sanitize any PII before sending to the LLM.
-    const sanitizedFeatureDescription = sanitizeText(featureDescription || "");
-    const sanitizedServiceTypes = sanitizeText(serviceTypes || "Not specified");
-    const sanitizedUserInterests = sanitizeText(userInterests || "Not specified");
-    const sanitizedUsageFrequency = sanitizeText(usageFrequency || "Not specified");
-    const sanitizedContactEmail = contactEmail ? "[EMAIL_REDACTED]" : "Not provided";
+    console.log("🎫 Analyzing feature request and generating Jira ticket...");
 
-    const prompt = [
-      "Create a Jira story from this feature request.",
-      "",
-      "## Input",
-      `Feature description: ${sanitizedFeatureDescription}`,
-      `Usage frequency: ${sanitizedUsageFrequency}`,
-      `Service types: ${sanitizedServiceTypes}`,
-      `User interests: ${sanitizedUserInterests}`,
-      `Contact email: ${sanitizedContactEmail}`,
-    ].join("\n");
+    // Build a structured prompt for the agent with all available context
+    const prompt = `Please analyze the following feature request and generate a complete Jira ticket specification.
 
-    console.log("🧠 Analyzing feature request for Jira...");
+## Feature Request Details
+
+**Feature Description:**
+${featureDescription}
+
+**Usage Frequency:** ${usageFrequency || "Not specified"}
+
+**Service Types:** ${serviceTypes || "Not specified"}
+
+**User Interests:** ${userInterests || "Not specified"}
+
+---
+
+Generate a comprehensive Jira ticket with all required fields. Remember to:
+1. Create an actionable, specific ticket title
+2. Include detailed problem statement and proposed solution
+3. Write 8-12 testable acceptance criteria
+4. Provide thorough QA testing notes
+5. Estimate story points with justification
+6. Assign appropriate priority based on the scoring rubric
+
+Return ONLY valid JSON with no markdown formatting.`;
 
     const response = await agent.generate(prompt);
     const responseText = response.text.trim();
 
     // Parse the JSON response from the agent
-    let parsedResponse: unknown;
+    let parsedResponse;
     try {
-      // Try to extract JSON from the response if it's wrapped in text
+      // Try to extract JSON from the response if it's wrapped in markdown
       const jsonMatch = responseText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         parsedResponse = JSON.parse(jsonMatch[0]);
@@ -130,14 +133,33 @@ const analyzeFeatureRequest = createStep({
       }
     } catch (error) {
       console.error("Failed to parse agent response:", responseText);
-      throw new Error(`Failed to parse Jira story output: ${error}`);
+      throw new Error(`Failed to parse Jira ticket response: ${error}`);
     }
 
-    // Validate and coerce into the expected output schema
-    const validated = jiraStoryOutputSchema.parse(parsedResponse);
+    // Validate and extract required fields
+    const summary = parsedResponse.summary || `[Feature] - ${featureDescription.substring(0, 80)}`;
+    const description = parsedResponse.description || "";
+    const acceptanceCriteria = parsedResponse.acceptanceCriteria || "";
+    const noteForQA = parsedResponse.noteForQA || "";
+    const storyPoints = typeof parsedResponse.storyPoints === "number" 
+      ? parsedResponse.storyPoints 
+      : 5; // Default to 5 if not provided
+    const priority = ["1", "2", "3", "4", "5"].includes(parsedResponse.priority) 
+      ? parsedResponse.priority 
+      : "3"; // Default to medium priority
 
-    console.log("✅ Jira story prepared successfully");
-    return validated;
+    console.log("✅ Jira ticket generated successfully");
+    console.log(`   Title: ${summary}`);
+    console.log(`   Priority: P${priority} | Story Points: ${storyPoints}`);
+
+    return {
+      summary,
+      description,
+      acceptanceCriteria,
+      noteForQA,
+      storyPoints,
+      priority: priority as "1" | "2" | "3" | "4" | "5",
+    };
   },
 });
 
@@ -153,5 +175,4 @@ const featureRequestWorkflow = createWorkflow({
 featureRequestWorkflow.commit();
 
 export { featureRequestWorkflow };
-export type { FeatureRequestRow } from "../tools/google-sheets";
 

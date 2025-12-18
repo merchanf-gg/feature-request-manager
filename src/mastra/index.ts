@@ -3,7 +3,6 @@ import { PinoLogger } from "@mastra/loggers";
 import { LibSQLStore } from "@mastra/libsql";
 
 // Agents
-import { featureRequestAgent } from "./agents/feature-request-agent";
 import { typeformParserAgent } from "./agents/typeform-parser-agent";
 import { jiraFeatureRequestAgent } from "./agents/jira-feature-request-agent";
 
@@ -16,7 +15,6 @@ import { VercelDeployer } from "@mastra/deployer-vercel";
 
 export const mastra = new Mastra({
   agents: { 
-    featureRequestAgent,
     typeformParserAgent,
     jiraFeatureRequestAgent,
   },
