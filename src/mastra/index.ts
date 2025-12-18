@@ -5,6 +5,7 @@ import { LibSQLStore } from "@mastra/libsql";
 // Agents
 import { featureRequestAgent } from "./agents/feature-request-agent";
 import { typeformParserAgent } from "./agents/typeform-parser-agent";
+import { jiraFeatureRequestAgent } from "./agents/jira-feature-request-agent";
 
 // Workflows
 import { featureRequestWorkflow } from "./workflows/feature-request-workflow";
@@ -17,6 +18,7 @@ export const mastra = new Mastra({
   agents: { 
     featureRequestAgent,
     typeformParserAgent,
+    jiraFeatureRequestAgent,
   },
   workflows: { 
     featureRequestWorkflow,

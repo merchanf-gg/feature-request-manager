@@ -1,15 +1,10 @@
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
-import crypto from "crypto";
+import { sanitizeText } from "../tools/pii-sanitizer";
 
 // ============================================================================
 // SCHEMAS
 // ============================================================================
-
-
-const typeformInputSchema = z.object({
-  text: z.string().describe("The whole Typeform response as a text string"),
-});
 
 const formInputSchema = z.object({
     featureDescription: z.string().describe("Raw feature request description from Typeform"),
@@ -19,91 +14,26 @@ const formInputSchema = z.object({
     contactEmail: z.string().optional().describe("User's contact email (will be sanitized)"),
   });
 
-const sanitizedDataSchema = z.object({
-  sanitizedDescription: z.string(),
-  sanitizedServiceTypes: z.string(),
-  sanitizedUserInterests: z.string(),
-  usageFrequency: z.string(),
-  userId: z.string(),
-  timestamp: z.string(),
-  requestId: z.string(),
+const jiraStoryOutputSchema = z.object({
+  summary: z.string().describe("Short Jira ticket title / summary"),
+  description: z.string().describe("The description of the Jira story"),
+  acceptanceCriteria: z.string().describe("The acceptance criteria of the Jira story"),
+  noteForQA: z.string().describe("A note for the QA team to test the story"),
+  storyPoints: z.number().describe("The story points of the Jira story"),
+  // Highest priority is 1, lowest priority is 5
+  priority: z.enum(["1", "2", "3", "4", "5"]).describe("The priority of the Jira story"),
 });
-
-const processedFeatureSchema = z.object({
-  feature_name: z.string(),
-  description: z.string(),
-  domain: z.string(),
-  niche: z.array(z.string()),
-  keywords: z.array(z.string()),
-  frequency: z.string(),
-  user_id: z.string(),
-  timestamp: z.string(),
-  request_id: z.string(),
-});
-
-const googleSheetsRowSchema = z.object({
-  request_id: z.string(),
-  timestamp: z.string(),
-  feature_name: z.string(),
-  description: z.string(),
-  domain: z.string(),
-  niche: z.string(),
-  keywords: z.string(),
-  frequency: z.string(),
-  user_id: z.string(),
-  success: z.boolean(),
-  message: z.string(),
-});
-
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
-
-function hashEmail(email: string): string {
-  return crypto
-    .createHash("md5")
-    .update(email.toLowerCase().trim())
-    .digest("hex")
-    .substring(0, 8);
-}
-
-function generateRequestId(): string {
-  const timestamp = new Date()
-    .toISOString()
-    .replace(/[-:TZ.]/g, "")
-    .substring(0, 14);
-  const randomChars = crypto.randomBytes(2).toString("hex").substring(0, 4);
-  return `req_${timestamp}_${randomChars}`;
-}
-
-function sanitizeText(text: string): string {
-  let sanitized = text;
-
-  // Remove email addresses
-  sanitized = sanitized.replace(
-    /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
-    "[EMAIL_REDACTED]"
-  );
-
-  return sanitized;
-}
-
-function arrayToCSV(arr: string[]): string {
-  return arr.join(", ");
-}
-
-// ============================================================================
-// WORKFLOW STEPS
-// ============================================================================
 
 /**
- * Step 0: Convert whole Typeform response to a JSON object
+ * Step 1: Convert whole Typeform response to a JSON object
  * Uses the typeformParserAgent to extract structured data from raw notification text
  */
 const convertTypeformResponseToJSON = createStep({
   id: "convert-typeform-response-to-json",
   description: "Converts the whole Typeform response to a JSON object using AI parsing",
-  inputSchema: typeformInputSchema,
+  inputSchema: z.object({
+    text: z.string().describe("The whole Typeform response as a text string"),
+  }),
   outputSchema: formInputSchema,
   execute: async ({ inputData, mastra }) => {
     const { text } = inputData;
@@ -152,120 +82,46 @@ const convertTypeformResponseToJSON = createStep({
   },
 });
 
-/**
- * Step 1: PII Sanitization
- * Sanitizes all PII from the raw Typeform input before any LLM processing
- */
-const sanitizePII = createStep({
-  id: "sanitize-pii",
-  description: "Sanitizes PII from raw Typeform data before LLM processing",
-  inputSchema: formInputSchema,
-  outputSchema: sanitizedDataSchema,
-  execute: async ({ inputData }) => {
-    const {
-      featureDescription,
-      usageFrequency,
-      serviceTypes,
-      userInterests,
-      contactEmail,
-    } = inputData;
-
-    // Generate anonymized user ID from email
-    const userId = contactEmail
-      ? `user_${hashEmail(contactEmail)}`
-      : `user_${crypto.randomBytes(4).toString("hex")}`;
-
-    // Generate timestamp and request ID
-    const timestamp = new Date().toISOString();
-    const requestId = generateRequestId();
-
-    // Sanitize all text fields
-    const sanitizedDescription = sanitizeText(featureDescription || "");
-    const sanitizedServiceTypes = sanitizeText(serviceTypes || "General");
-    const sanitizedUserInterests = sanitizeText(userInterests || "");
-
-    console.log(`🔒 PII Sanitization Complete`);
-    console.log(`   User ID: ${userId}`);
-    console.log(`   Request ID: ${requestId}`);
-
-    return {
-      sanitizedDescription,
-      sanitizedServiceTypes,
-      sanitizedUserInterests,
-      usageFrequency: usageFrequency || "Not specified",
-      userId,
-      timestamp,
-      requestId,
-    };
-  },
-});
-
-/**
- * Step 2: Feature Request Analysis
- * Uses LLM to analyze and categorize the sanitized feature request
- */
 const analyzeFeatureRequest = createStep({
   id: "analyze-feature-request",
-  description: "Analyzes sanitized feature request using LLM for categorization",
-  inputSchema: sanitizedDataSchema,
-  outputSchema: processedFeatureSchema,
+  description: "Analyzes the feature request and prepares it for Jira",
+  inputSchema: formInputSchema,
+  outputSchema: jiraStoryOutputSchema,
   execute: async ({ inputData, mastra }) => {
-    const {
-      sanitizedDescription,
-      sanitizedServiceTypes,
-      sanitizedUserInterests,
-      usageFrequency,
-      userId,
-      timestamp,
-      requestId,
-    } = inputData;
+    const { featureDescription, usageFrequency, serviceTypes, userInterests, contactEmail } = inputData;
 
-    const agent = mastra?.getAgent("featureRequestAgent");
+    const agent = mastra?.getAgent("jiraFeatureRequestAgent");
     if (!agent) {
-      throw new Error("Feature request agent not found");
+      throw new Error("Jira feature request agent not found");
     }
 
-    const prompt = `Analyze this feature request and return ONLY a valid JSON object (no markdown, no code blocks):
+    // Sanitize any PII before sending to the LLM.
+    const sanitizedFeatureDescription = sanitizeText(featureDescription || "");
+    const sanitizedServiceTypes = sanitizeText(serviceTypes || "Not specified");
+    const sanitizedUserInterests = sanitizeText(userInterests || "Not specified");
+    const sanitizedUsageFrequency = sanitizeText(usageFrequency || "Not specified");
+    const sanitizedContactEmail = contactEmail ? "[EMAIL_REDACTED]" : "Not provided";
 
-## Feature Request Data
+    const prompt = [
+      "Create a Jira story from this feature request.",
+      "",
+      "## Input",
+      `Feature description: ${sanitizedFeatureDescription}`,
+      `Usage frequency: ${sanitizedUsageFrequency}`,
+      `Service types: ${sanitizedServiceTypes}`,
+      `User interests: ${sanitizedUserInterests}`,
+      `Contact email: ${sanitizedContactEmail}`,
+    ].join("\n");
 
-**Description:** ${sanitizedDescription}
-
-**Usage Frequency:** ${usageFrequency}
-
-**Service Types:** ${sanitizedServiceTypes}
-
-**User Interests:** ${sanitizedUserInterests}
-
-## Pre-generated Fields (use these exact values)
-
-- user_id: "${userId}"
-- timestamp: "${timestamp}"
-- request_id: "${requestId}"
-- frequency: "${usageFrequency}"
-
-## Required JSON Output
-
-Return a JSON object with these exact fields:
-{
-  "feature_name": "<normalized feature name>",
-  "description": "<clear 1-2 sentence summary>",
-  "domain": "<one of: Booking Site, Payments, Marketing, Client Management, Analytics, Other>",
-  "niche": ["<standardized service categories>"],
-  "keywords": ["<3-5 relevant terms>"],
-  "frequency": "${usageFrequency}",
-  "user_id": "${userId}",
-  "timestamp": "${timestamp}",
-  "request_id": "${requestId}"
-}`;
+    console.log("🧠 Analyzing feature request for Jira...");
 
     const response = await agent.generate(prompt);
     const responseText = response.text.trim();
 
-    // Parse the JSON response
-    let parsedResponse;
+    // Parse the JSON response from the agent
+    let parsedResponse: unknown;
     try {
-      // Try to extract JSON from the response if it's wrapped in markdown
+      // Try to extract JSON from the response if it's wrapped in text
       const jsonMatch = responseText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         parsedResponse = JSON.parse(jsonMatch[0]);
@@ -273,120 +129,26 @@ Return a JSON object with these exact fields:
         parsedResponse = JSON.parse(responseText);
       }
     } catch (error) {
-      console.error("Failed to parse LLM response:", responseText);
-      // Fallback to default values
-      parsedResponse = {
-        feature_name: "Feature Review Needed",
-        description: sanitizedDescription,
-        domain: "Other",
-        niche: sanitizedServiceTypes.split(",").map((s: string) => s.trim()) || ["General"],
-        keywords: ["Review", "Unprocessed"],
-        frequency: usageFrequency,
-        user_id: userId,
-        timestamp,
-        request_id: requestId,
-      };
+      console.error("Failed to parse agent response:", responseText);
+      throw new Error(`Failed to parse Jira story output: ${error}`);
     }
 
-    // Ensure all required fields are present
-    const result = {
-      feature_name: parsedResponse.feature_name || "Feature Review Needed",
-      description: parsedResponse.description || sanitizedDescription,
-      domain: parsedResponse.domain || "Other",
-      niche: Array.isArray(parsedResponse.niche) ? parsedResponse.niche : ["General"],
-      keywords: Array.isArray(parsedResponse.keywords) ? parsedResponse.keywords : [],
-      frequency: usageFrequency,
-      user_id: userId,
-      timestamp,
-      request_id: requestId,
-    };
+    // Validate and coerce into the expected output schema
+    const validated = jiraStoryOutputSchema.parse(parsedResponse);
 
-    console.log(`📊 Feature Analysis Complete`);
-    console.log(`   Feature Name: ${result.feature_name}`);
-    console.log(`   Domain: ${result.domain}`);
-    console.log(`   Niche: ${result.niche.join(", ")}`);
-
-    return result;
+    console.log("✅ Jira story prepared successfully");
+    return validated;
   },
 });
-
-/**
- * Step 3: Prepare Google Sheets Row
- * Converts arrays to CSV strings and prepares the final row data
- */
-const prepareGoogleSheetsRow = createStep({
-  id: "prepare-google-sheets-row",
-  description: "Converts processed data into Google Sheets row format",
-  inputSchema: processedFeatureSchema,
-  outputSchema: googleSheetsRowSchema,
-  execute: async ({ inputData }) => {
-    const {
-      feature_name,
-      description,
-      domain,
-      niche,
-      keywords,
-      frequency,
-      user_id,
-      timestamp,
-      request_id,
-    } = inputData;
-
-    // Convert arrays to comma-separated strings
-    const nicheCSV = arrayToCSV(niche);
-    const keywordsCSV = arrayToCSV(keywords);
-
-    // Log the row data (in production, this would append to Google Sheets)
-    console.log("\n📊 Google Sheets Row Data:");
-    console.log("═══════════════════════════════════════════════════════════");
-    console.log(`Request ID:    ${request_id}`);
-    console.log(`Timestamp:     ${timestamp}`);
-    console.log(`Feature:       ${feature_name}`);
-    console.log(`Description:   ${description}`);
-    console.log(`Domain:        ${domain}`);
-    console.log(`Niche:         ${nicheCSV}`);
-    console.log(`Keywords:      ${keywordsCSV}`);
-    console.log(`Frequency:     ${frequency}`);
-    console.log(`User ID:       ${user_id}`);
-    console.log("═══════════════════════════════════════════════════════════\n");
-
-    // In production, you would call the Google Sheets API here:
-    // await appendToGoogleSheets({
-    //   spreadsheetId: process.env.GOOGLE_SHEET_ID,
-    //   range: 'Feature Requests!A:I',
-    //   values: [[request_id, timestamp, feature_name, description, domain, nicheCSV, keywordsCSV, frequency, user_id]],
-    // });
-
-    return {
-      request_id,
-      timestamp,
-      feature_name,
-      description,
-      domain,
-      niche: nicheCSV,
-      keywords: keywordsCSV,
-      frequency,
-      user_id,
-      success: true,
-      message: `Feature request processed successfully (${request_id})`,
-    };
-  },
-});
-
-// ============================================================================
-// WORKFLOW DEFINITION
-// ============================================================================
 
 const featureRequestWorkflow = createWorkflow({
   id: "feature-request-workflow",
-  description: "Processes Typeform feature requests: parses raw text, sanitizes PII, analyzes with LLM, and prepares for Google Sheets",
-  inputSchema: typeformInputSchema,
-  outputSchema: googleSheetsRowSchema,
+  description: "Processes feature requests: sanitizes PII, analyzes with LLM, and prepares a Jira-ready story",
+  inputSchema: formInputSchema,
+  outputSchema: jiraStoryOutputSchema,
 })
-  .then(convertTypeformResponseToJSON)
-  .then(sanitizePII)
+  // Webhook route already provides structured fields; analyze directly.
   .then(analyzeFeatureRequest)
-  .then(prepareGoogleSheetsRow);
 
 featureRequestWorkflow.commit();
 
